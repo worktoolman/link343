@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 图标源图（本地保留，不提交到公开仓库）
+bull-src.jpg
