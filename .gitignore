@@ -25,3 +25,7 @@ dist-ssr
 
 # 图标源图（本地保留，不提交到公开仓库）
 bull-src.jpg
+
+# Python 缓存
+__pycache__/
+*.pyc
