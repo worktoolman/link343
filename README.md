@@ -45,10 +45,19 @@ python scripts/resize-icon.py 图片.png   # 用自己的图片生成（需正�
 
 ## 部署
 
-推送到 `main` 分支后，GitHub Actions 自动构建并部署到 GitHub Pages。
-工作流见 `.github/workflows/deploy.yml`。
+```bash
+npm run deploy
+```
 
-仓库首次启用需要在 **Settings → Pages → Source** 选 **GitHub Actions**。
+把 `dist/` 的内容推到 `gh-pages` 分支，GitHub Pages 从该分支直接发布。
+**不依赖 GitHub Actions**（避免执行器/额度问题），任何账号都能用。
+
+仓库首次部署时需要开启一次：
+
+> **Settings → Pages → Source** 选 **Deploy from a branch**
+> 分支选 `gh-pages`，目录选 `/ (root)`，然后 Save
+
+之后每次改完代码，跑一句 `npm run deploy` 就更新了。
 
 ## 数据结构
 
