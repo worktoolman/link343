@@ -5,6 +5,7 @@
    ============================================ */
 
 const KEY = 'ledger.records.v1'
+const BUDGET_KEY = 'ledger.budget.v1'
 
 /** 预置分类（先写死，将来要自定义再说） */
 export const EXPENSE_CATEGORIES = [
@@ -223,6 +224,8 @@ export function getStats(month = currentMonth()) {
     // 金额降序；并列时按分类名排序，保证顺序稳定
     .sort((a, b) => b.amount - a.amount || a.category.localeCompare(b.category, 'zh'))
 
+  const budget = getBudget(month)
+
   return {
     month,
     expense,
@@ -230,6 +233,10 @@ export function getStats(month = currentMonth()) {
     balance: round2(income - expense),
     count: list.length,
     byCategory,
+    // 生活费：没设置过预算时这三项都是 null
+    budget,
+    remaining: budget == null ? null : round2(budget - expense),
+    usedPercent: budget ? round2((expense / budget) * 100) : null,
   }
 }
 
@@ -244,9 +251,75 @@ export function getMonths() {
   return months
 }
 
+// ---------- 生活费预算 ----------
+//
+// 存储结构：
+//   {
+//     default: 2000,              // 默认月预算，新月份自动沿用
+//     months: { "2026-09": 2500 } // 单月覆盖（设置某月时会同时更新 default）
+//   }
+
+function loadBudget() {
+  try {
+    const raw = localStorage.getItem(BUDGET_KEY)
+    if (!raw) return { default: null, months: {} }
+    const data = JSON.parse(raw)
+    return {
+      default: Number.isFinite(data?.default) ? data.default : null,
+      months: data?.months && typeof data.months === 'object' ? data.months : {},
+    }
+  } catch (err) {
+    console.error('[store] 预算读取失败', err)
+    return { default: null, months: {} }
+  }
+}
+
+function saveBudget(b) {
+  localStorage.setItem(BUDGET_KEY, JSON.stringify(b))
+}
+
+/**
+ * 取某月的生活费总额
+ * @param {string} month YYYY-MM
+ * @returns {number|null} 没设置过返回 null
+ */
+export function getBudget(month = currentMonth()) {
+  const b = loadBudget()
+  return b.months[month] ?? b.default
+}
+
+/**
+ * 设置某月的生活费总额
+ * 同时更新默认值，这样下个月会自动沿用，不用重复设置
+ * @param {number|string} amount
+ * @param {string} month YYYY-MM
+ * @returns {number} 实际写入的金额
+ */
+export function setBudget(amount, month = currentMonth()) {
+  const v = round2(amount)
+  if (!Number.isFinite(v) || v <= 0) {
+    throw new Error('生活费必须是大于 0 的数字')
+  }
+
+  const b = loadBudget()
+  b.months[month] = v
+  b.default = v
+  saveBudget(b)
+  return v
+}
+
+/** 取消某月的预算设置（连同默认值一起清掉） */
+export function clearBudget(month = currentMonth()) {
+  const b = loadBudget()
+  delete b.months[month]
+  b.default = null
+  saveBudget(b)
+}
+
 /** 清空所有数据（调试用） */
 export function clearAll() {
   localStorage.removeItem(KEY)
+  localStorage.removeItem(BUDGET_KEY)
 }
 
 /** 写入演示数据（调试用） */
@@ -279,6 +352,9 @@ if (import.meta.env?.DEV) {
     groupByDay,
     getStats,
     getMonths,
+    getBudget,
+    setBudget,
+    clearBudget,
     clearAll,
     seedDemo,
   }

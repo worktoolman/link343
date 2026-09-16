@@ -19,8 +19,18 @@ import struct
 import sys
 import zlib
 
+# Windows 控制台默认 GBK，中文输出会乱码，这里强制 UTF-8
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'public', 'icons')
 MAX_EDGE = 4096
+
+# 可遮罩图标：内容缩到中间这个比例，四周补背景色。
+# 安卓会把图标裁成圆形/方形，留出边距才不会被切掉。
+MASKABLE_CONTENT_RATIO = 0.78
 
 
 # ---------- 解码 ----------
@@ -195,6 +205,54 @@ def write_png(path, pixels):
     return len(png)
 
 
+# ---------- 可遮罩图标 ----------
+
+def sample_background(src, w, h):
+    """从四角取样推断背景色，用来补 maskable 的边"""
+    k = max(1, min(w, h) // 24)
+    corners = [(0, 0), (w - k, 0), (0, h - k), (w - k, h - k)]
+
+    samples = []
+    for cx, cy in corners:
+        for y in range(cy, cy + k):
+            for x in range(cx, cx + k):
+                samples.append(src[y][x])
+
+    n = len(samples)
+    r = sum(p[0] for p in samples) // n
+    g = sum(p[1] for p in samples) // n
+    b = sum(p[2] for p in samples) // n
+    a = sum(p[3] for p in samples) // n
+
+    # 四角是透明的就用白色兜底，否则安卓遮罩下会透出桌面
+    if a < 128:
+        return (255, 255, 255, 255)
+
+    return (r, g, b, a)
+
+
+def make_maskable(src, w, h, size):
+    """把内容缩到安全区，四周用背景色补满"""
+    bg = sample_background(src, w, h)
+    inner = max(1, int(size * MASKABLE_CONTENT_RATIO))
+    inner_px = resize(src, w, h, inner)
+    offset = (size - inner) // 2
+
+    out = []
+    for y in range(size):
+        iy = y - offset
+        row = []
+        for x in range(size):
+            ix = x - offset
+            if 0 <= iy < inner and 0 <= ix < inner:
+                row.append(inner_px[iy][ix])
+            else:
+                row.append(bg)
+        out.append(row)
+
+    return out
+
+
 # ---------- 主流程 ----------
 
 def main():
@@ -215,15 +273,17 @@ def main():
             f'      请先裁成正方形再给我。'
         )
 
-    for name, size in [
-        ('icon-192.png', 192),
-        ('icon-512.png', 512),
-        ('icon-maskable-512.png', 512),
-    ]:
+    for name, size in [('icon-192.png', 192), ('icon-512.png', 512)]:
         print(f'  生成 {name} ({size}x{size}) ...', end='', flush=True)
         pixels = resize(src, w, h, size)
         nbytes = write_png(os.path.join(OUT_DIR, name), pixels)
         print(f' 完成 ({nbytes / 1024:.1f} KB)')
+
+    # 可遮罩版：内容收进安全区，免得被安卓的圆形/方形遮罩裁掉边缘
+    print('  生成 icon-maskable-512.png (内容收进安全区) ...', end='', flush=True)
+    pixels = make_maskable(src, w, h, 512)
+    nbytes = write_png(os.path.join(OUT_DIR, 'icon-maskable-512.png'), pixels)
+    print(f' 完成 ({nbytes / 1024:.1f} KB)')
 
     print('\n图标已更新到 public/icons/')
 

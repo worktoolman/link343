@@ -120,6 +120,105 @@ export function confirmDialog({
 }
 
 /**
+ * 底部弹出的输入对话框
+ * @param {{
+ *   title?:string, message?:string, defaultValue?:string, placeholder?:string,
+ *   confirmText?:string, cancelText?:string, inputMode?:string, suffix?:string,
+ *   validate?:((v:string)=>(string|null))|null
+ * }} opts
+ * @returns {Promise<string|null>} 确定返回输入值，取消返回 null
+ */
+export function promptDialog({
+  title = '',
+  message = '',
+  defaultValue = '',
+  placeholder = '',
+  confirmText = '确定',
+  cancelText = '取消',
+  inputMode = 'text',
+  suffix = '',
+  validate = null,
+} = {}) {
+  return new Promise((resolve) => {
+    const mask = document.createElement('div')
+    mask.className = 'dlg-mask'
+    mask.innerHTML = `
+      <div class="dlg">
+        <div class="dlg-title">${escapeHtml(title)}</div>
+        ${message ? `<div class="dlg-msg">${escapeHtml(message)}</div>` : ''}
+        <div class="dlg-input-row">
+          <input
+            class="dlg-input"
+            type="text"
+            inputmode="${escapeHtml(inputMode)}"
+            value="${escapeHtml(defaultValue)}"
+            placeholder="${escapeHtml(placeholder)}"
+            autocomplete="off"
+          />
+          ${suffix ? `<span class="dlg-suffix">${escapeHtml(suffix)}</span>` : ''}
+        </div>
+        <div class="dlg-error" hidden></div>
+        <div class="dlg-actions">
+          <button type="button" class="dlg-btn" data-act="cancel">${escapeHtml(cancelText)}</button>
+          <button type="button" class="dlg-btn is-primary" data-act="ok">${escapeHtml(confirmText)}</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(mask)
+    requestAnimationFrame(() => mask.classList.add('is-show'))
+
+    const input = mask.querySelector('.dlg-input')
+    const errEl = mask.querySelector('.dlg-error')
+
+    // 等入场动画起来再聚焦，否则移动端键盘会打断动画
+    setTimeout(() => {
+      input.focus()
+      input.select()
+    }, 60)
+
+    let done = false
+    function close(val) {
+      if (done) return
+      done = true
+      mask.classList.remove('is-show')
+      setTimeout(() => mask.remove(), 220)
+      resolve(val)
+    }
+
+    function submit() {
+      const val = input.value.trim()
+      const err = validate ? validate(val) : null
+      if (err) {
+        errEl.textContent = err
+        errEl.hidden = false
+        input.focus()
+        return
+      }
+      close(val)
+    }
+
+    mask.addEventListener('click', (e) => {
+      if (e.target === mask) return close(null)
+      const btn = e.target.closest('.dlg-btn')
+      if (!btn) return
+      if (btn.dataset.act === 'ok') submit()
+      else close(null)
+    })
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        submit()
+      }
+    })
+
+    input.addEventListener('input', () => {
+      errEl.hidden = true
+    })
+  })
+}
+
+/**
  * 绑定长按手势
  * @param {HTMLElement} container 事件委托的容器
  * @param {string} selector 目标元素选择器

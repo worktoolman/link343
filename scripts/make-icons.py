@@ -123,23 +123,33 @@ def scale_of(maskable):
 
 
 def downsample(rows, W, size):
-    """SS x SS 盒式平均，同时处理透明像素与背景的混合"""
+    """
+    SS x SS 盒式平均。
+    颜色按 alpha 预乘后再平均，否则透明像素的黑色会渗进边缘，出现黑边。
+    """
     out = []
+    n = SS * SS
+
     for oy in range(size):
         line = []
         for ox in range(size):
-            r = g = b = 0
+            ar = ag = ab = aa = 0
             for dy in range(SS):
                 row = rows[oy * SS + dy]
                 base = ox * SS
                 for dx in range(SS):
-                    pr, pg, pb, _ = row[base + dx]
-                    r += pr
-                    g += pg
-                    b += pb
-            n = SS * SS
-            line.append((r // n, g // n, b // n))
+                    pr, pg, pb, pa = row[base + dx]
+                    ar += pr * pa
+                    ag += pg * pa
+                    ab += pb * pa
+                    aa += pa
+
+            if aa == 0:
+                line.append((0, 0, 0, 0))
+            else:
+                line.append((ar // aa, ag // aa, ab // aa, aa // n))
         out.append(line)
+
     return out
 
 
@@ -149,11 +159,19 @@ def write_png(path, pixels):
     height = len(pixels)
     width = len(pixels[0])
 
+    # 全不透明就写 RGB，有透明像素就写 RGBA
+    opaque = all(px[3] == 255 for row in pixels for px in row)
+    color_type = 2 if opaque else 6
+
     raw = bytearray()
     for row in pixels:
         raw.append(0)  # 过滤器类型：None
-        for r, g, b in row:
-            raw += bytes((r, g, b))
+        if opaque:
+            for r, g, b, _ in row:
+                raw += bytes((r, g, b))
+        else:
+            for r, g, b, a in row:
+                raw += bytes((r, g, b, a))
 
     def chunk(tag, data):
         return (
@@ -164,7 +182,7 @@ def write_png(path, pixels):
         )
 
     png = b'\x89PNG\r\n\x1a\n'
-    png += chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+    png += chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, color_type, 0, 0, 0))
     png += chunk(b'IDAT', zlib.compress(bytes(raw), 9))
     png += chunk(b'IEND', b'')
 

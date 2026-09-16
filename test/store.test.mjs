@@ -30,6 +30,9 @@ const {
   formatDay,
   formatMonth,
   formatAmount,
+  getBudget,
+  setBudget,
+  clearBudget,
 } = await import('../src/store.js')
 
 // ---------- 迷你断言 ----------
@@ -262,6 +265,96 @@ check('getMonths 倒序且含当前月', () => {
 })
 
 // ---------- 汇总 ----------
+
+console.log('\n【生活费预算】')
+
+check('未设置时 getBudget 返回 null', () => {
+  clearAll()
+  eq(getBudget('2026-09'), null)
+})
+
+check('setBudget 设置并返回金额', () => {
+  clearAll()
+  eq(setBudget(2000, '2026-09'), 2000)
+  eq(getBudget('2026-09'), 2000)
+})
+
+check('setBudget 同时更新默认值，其他月份自动沿用', () => {
+  clearAll()
+  setBudget(2000, '2026-09')
+  eq(getBudget('2026-10'), 2000, '10月应沿用9月设的值')
+  eq(getBudget('2025-01'), 2000, '更早的月份也应沿用默认')
+})
+
+check('setBudget 可单独覆盖某月', () => {
+  clearAll()
+  setBudget(2000, '2026-09')
+  setBudget(2500, '2026-11')
+  eq(getBudget('2026-11'), 2500)
+  eq(getBudget('2026-09'), 2000, '9月应保持原值')
+})
+
+check('setBudget 拒绝非法金额', () => {
+  clearAll()
+  for (const bad of [0, -100, 'abc', NaN, null]) {
+    let threw = false
+    try {
+      setBudget(bad, '2026-09')
+    } catch {
+      threw = true
+    }
+    ok(threw, `金额 ${bad} 应被拒绝`)
+  }
+})
+
+check('clearBudget 清除设置', () => {
+  clearAll()
+  setBudget(2000, '2026-09')
+  clearBudget('2026-09')
+  eq(getBudget('2026-09'), null)
+})
+
+check('getStats 带出预算、剩余与占比', () => {
+  clearAll()
+  setBudget(2000, '2026-09')
+  addRecord({ amount: 500, type: 'expense', category: '餐饮', date: '2026-09-05' })
+
+  const s = getStats('2026-09')
+  eq(s.budget, 2000)
+  eq(s.remaining, 1500)
+  eq(s.usedPercent, 25)
+})
+
+check('超支时剩余为负数、占比超过100', () => {
+  clearAll()
+  setBudget(100, '2026-09')
+  addRecord({ amount: 250, type: 'expense', category: '餐饮', date: '2026-09-05' })
+
+  const s = getStats('2026-09')
+  eq(s.remaining, -150)
+  eq(s.usedPercent, 250)
+})
+
+check('未设预算时三项均为 null', () => {
+  clearAll()
+  addRecord({ amount: 50, type: 'expense', category: '餐饮', date: '2026-09-05' })
+
+  const s = getStats('2026-09')
+  eq(s.budget, null)
+  eq(s.remaining, null)
+  eq(s.usedPercent, null)
+})
+
+check('收入不影响生活费占比', () => {
+  clearAll()
+  setBudget(1000, '2026-09')
+  addRecord({ amount: 300, type: 'expense', category: '餐饮', date: '2026-09-05' })
+  addRecord({ amount: 5000, type: 'income', category: '工资', date: '2026-09-10' })
+
+  const s = getStats('2026-09')
+  eq(s.usedPercent, 30, '只算支出')
+  eq(s.remaining, 700)
+})
 
 console.log('\n' + '─'.repeat(40))
 if (fails.length === 0) {
