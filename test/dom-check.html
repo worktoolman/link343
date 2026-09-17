@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>domcheck</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      const log = []
+      let pass = 0
+      let fail = 0
+
+      const ok = (cond, label) => {
+        if (cond) {
+          pass++
+          log.push('PASS ' + label)
+        } else {
+          fail++
+          log.push('FAIL ' + label)
+        }
+      }
+
+      const q = (sel, root = document) => root.querySelector(sel)
+      const qa = (sel, root = document) => [...root.querySelectorAll(sel)]
+      const txt = (el) => (el ? el.textContent : '<没找到>')
+      const tick = () => new Promise((r) => setTimeout(r, 0))
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      const fire = (el, type) => el.dispatchEvent(new Event(type, { bubbles: true }))
+      const tab = (id) => q(`.tab[data-id="${id}"]`)
+
+      window.addEventListener('error', (e) => {
+        fail++
+        log.push('FAIL window.onerror: ' + e.message)
+      })
+      window.addEventListener('unhandledrejection', (e) => {
+        fail++
+        log.push(
+          'FAIL 未处理的 Promise 异常: ' + (e.reason?.stack || e.reason?.message || e.reason)
+        )
+      })
+
+      try {
+        const store = await import('/src/store.js')
+        const ui = await import('/src/ui.js')
+        await import('/src/main.js') // 真实应用入口
+
+        const app = document.getElementById('app')
+        const main = () => document.getElementById('body')
+
+        // 把应用限制成手机宽度，顺便检查会不会横向溢出（截图里最容易看出来的问题）
+        app.style.width = '390px'
+        app.style.height = '844px'
+        const noOverflow = (label) => {
+          const el = document.getElementById('app')
+          ok(el.scrollWidth <= el.clientWidth + 1, `${label}：390px 宽的手机上没有横向溢出`)
+        }
+
+        // 切走再切回来 = 重新挂载视图，拿到干净状态
+        const remount = async (id) => {
+          const other = id === 'record' ? 'list' : 'record'
+          tab(other).click()
+          tab(id).click()
+          await tick()
+        }
+
+        store.clearAll()
+        await remount('record')
+
+        // ---------------- 需求 1：分类可自由增删 ----------------
+        ok(qa('.cat', main()).length === 7, '记账页渲染 7 个预置支出分类')
+
+        q('#manageBtn', main()).click()
+        await tick()
+        const panel = q('#catPanel', main())
+        ok(!!panel && !panel.hidden, '点「管理」展开分类管理面板')
+        ok(qa('.cat-edit', panel).length === 7, '面板里每个分类一行')
+        noOverflow('分类管理展开时')
+
+        // ---------------- 需求 2：输入不遮挡其他界面 ----------------
+        ok(getComputedStyle(panel).position === 'static', '管理面板在文档流内，不是覆盖层')
+        ok(!q('.dlg-mask'), '展开管理面板时没有全屏遮罩')
+        ok(q('#cats', main()).getBoundingClientRect().height > 0, '分类九宫格仍可见')
+        for (const sel of ['#note', '#date', '#save']) {
+          const el = q(sel, main())
+          ok(el && el.offsetHeight > 0, `${sel} 仍在页面上（没被输入界面盖住）`)
+        }
+        ok(
+          q('#note', main()).getBoundingClientRect().top >=
+            panel.getBoundingClientRect().bottom - 1,
+          '备注/日期排在面板下方，内容顺序正常'
+        )
+        ok(
+          Math.round(parseFloat(getComputedStyle(app).paddingBottom)) === 0,
+          '--kb 初始化后默认不留白'
+        )
+        document.documentElement.style.setProperty('--kb', '280px')
+        ok(
+          Math.round(parseFloat(getComputedStyle(app).paddingBottom)) === 280,
+          '键盘弹出时 #app 底部按 --kb 留白'
+        )
+        document.documentElement.style.setProperty('--kb', '0px')
+        for (const sel of ['#note', '#date']) {
+          ok(
+            parseFloat(getComputedStyle(q(sel, main())).fontSize) >= 16,
+            `${sel} 字号 ≥16px（iOS 聚焦不会放大整页）`
+          )
+        }
+
+        // 新增分类
+        q('#newCat', main()).value = '宠物'
+        q('[data-act="cat-add"]', main()).click()
+        await tick()
+        ok(store.categoriesOf('expense').includes('宠物'), '新增分类写进 store')
+        ok(qa('.cat', main()).some((c) => c.textContent === '宠物'), '九宫格出现新分类')
+        ok(qa('.cat-edit', q('#catPanel', main())).length === 8, '面板变成 8 行')
+        ok(
+          document.activeElement === q('#newCat', main()),
+          '加完焦点还在新分类输入框里（可连续添加）'
+        )
+
+        // 改名
+        const nameInput = q('.cat-edit[data-cat="宠物"] [data-field="cat-name"]', main())
+        nameInput.value = '宠物开销'
+        fire(nameInput, 'change')
+        await tick()
+        ok(store.categoriesOf('expense').includes('宠物开销'), '改名写进 store')
+        ok(!store.categoriesOf('expense').includes('宠物'), '旧名字消失')
+        ok(qa('.cat', main()).some((c) => c.textContent === '宠物开销'), '九宫格同步改名')
+        ok(q('#catPanel', main()).contains(nameInput), '改名是就地更新，没有重建面板（输入不被打断）')
+
+        // 删除分类（带确认）
+        q('.cat-edit[data-cat="宠物开销"] [data-act="cat-del"]', main()).click()
+        await tick()
+        let mask = q('.dlg-mask')
+        ok(!!mask, '删除前弹确认框')
+        ok(mask.textContent.includes('宠物开销'), '确认框带分类名')
+        q('[data-act="ok"]', mask).click()
+        await sleep(320)
+        ok(!store.categoriesOf('expense').includes('宠物开销'), '删除生效')
+        ok(qa('.cat', main()).length === 7, '九宫格回到 7 个')
+
+        // 收入 / 支出分类互不干扰
+        q('.segmented button[data-type="income"]', main()).click()
+        await tick()
+        ok(qa('.cat-edit', q('#catPanel', main())).length === 4, '收入分类 4 行，与支出分开管理')
+        ok(store.categoriesOf('expense').length === 7, '切到收入不影响支出分类')
+        q('.segmented button[data-type="expense"]', main()).click()
+        await tick()
+
+        // 再加一个自定义分类，用它记账
+        q('#newCat', main()).value = '零食'
+        q('[data-act="cat-add"]', main()).click()
+        await tick()
+        q('#manageBtn', main()).click() // 收起面板
+        await tick()
+        qa('.cat', main())
+          .find((c) => c.textContent === '零食')
+          .click()
+        const amountEl = q('#amount', main())
+        amountEl.value = '32.5'
+        fire(amountEl, 'input')
+        q('#save', main()).click()
+        await tick()
+        ok(store.getRecords().length === 1, '记账保存成功')
+        ok(store.getRecords()[0].category === '零食', '用的是自定义分类')
+        ok(q('.app-subtitle', app).textContent.includes('本月支出'), '页头副标题刷新')
+
+        // ---------------- 明细页 ----------------
+        await remount('list')
+        ok(qa('.rec', main()).length === 1, '明细页显示 1 条记录')
+        ok(q('.rec-cat', main()).textContent === '零食', '明细显示自定义分类名')
+
+        // ---------------- 需求 3：统计页生活费 + 专项额度 ----------------
+        await remount('stats')
+        ok(!!q('.budget-card.is-empty', main()), '未设置时显示「设置本月生活费」')
+        noOverflow('统计页展示态')
+
+        q('.budget-card', main()).click()
+        await tick()
+        const bpanel = q('#budgetPanel', main())
+        ok(!!bpanel, '点生活费卡片展开的是页内编辑面板')
+        ok(getComputedStyle(bpanel).position === 'static', '生活费面板也在文档流内')
+        ok(!q('.dlg-mask'), '编辑生活费时没有遮罩挡住统计内容')
+        ok(q('#lowerZone', main()).offsetHeight > 0, '下面的合计与支出构成仍在页面上')
+        noOverflow('生活费编辑面板展开时')
+        for (const sel of ['.editor-input', '.bi-select']) {
+          const el = q(sel, bpanel)
+          if (el) {
+            ok(
+              parseFloat(getComputedStyle(el).fontSize) >= 16,
+              `${sel} 字号 ≥16px（iOS 聚焦不会放大整页）`
+            )
+          }
+        }
+
+        // 生活费总额
+        const totalInput = q('[data-field="total"]', bpanel)
+        totalInput.value = '2000'
+        fire(totalInput, 'change')
+        await tick()
+        ok(store.getBudget() === 2000, '生活费总额写进 store')
+        ok(txt(q('.budget-card', main())).includes('2,000.00'), '卡片显示新总额')
+        ok(q('#budgetPanel', main()) === bpanel, '改总额没重建面板（焦点不跑）')
+
+        // 添加专项额度：草稿自动转正
+        q('[data-act="item-add"]', main()).click()
+        await tick()
+        const draftRow = q('.bi-edit[data-id="draft"]', main())
+        ok(!!draftRow, '出现待填写的额度行')
+        noOverflow('新增额度行出现时')
+        const dName = q('[data-field="name"]', draftRow)
+        dName.value = '饮食花销'
+        fire(dName, 'input')
+        const dCat = q('[data-field="category"]', draftRow)
+        dCat.value = '零食'
+        fire(dCat, 'change')
+        const dAmt = q('[data-field="amount"]', draftRow)
+        dAmt.value = '100'
+        fire(dAmt, 'input')
+        fire(dAmt, 'change')
+        await tick()
+        ok(store.getBudgetItems().length === 1, '名称+额度填好后自动保存')
+        ok(store.getBudgetItems()[0].name === '饮食花销', '额度项名称正确')
+        ok(store.getBudgetItems()[0].category === '零食', '绑定分类正确')
+        ok(store.getBudgetItems()[0].amount === 100, '额度金额正确')
+        ok(q('.bi-edit[data-id="draft"]', main()) === null, '草稿行就地变成正式行')
+        ok(draftRow.dataset.id === store.getBudgetItems()[0].id, '草稿行没有重建（焦点不跑）')
+
+        const foodId = store.getBudgetItems()[0].id
+        store.addBudgetItem({ name: '购物额度', category: '购物', amount: 50 })
+
+        // 完成 → 回到展示
+        q('[data-act="editor-done"]', main()).click()
+        await tick()
+        ok(q('#budgetPanel', main()) === null, '完成后编辑面板收起')
+        let cards = qa('.bi-card', main())
+        ok(cards.length === 2, '展示两张专项额度卡片')
+        const foodCard = cards.find((c) => c.textContent.includes('饮食花销'))
+        ok(txt(foodCard).includes('32.50'), '已花 = 32.50')
+        ok(txt(foodCard).includes('100.00'), '额度 = 100.00')
+        ok(txt(foodCard).includes('剩 ¥67.50'), '剩余 = 67.50')
+        ok(foodCard?.dataset.state === 'ok', '未超支是正常状态')
+
+        // 超支
+        store.addRecord({ amount: 80, type: 'expense', category: '购物' })
+        await remount('stats')
+        cards = qa('.bi-card', main())
+        const shopCard = cards.find((c) => c.textContent.includes('购物额度'))
+        ok(shopCard?.dataset.state === 'over', '超支卡片状态为 over')
+        ok(txt(shopCard).includes('超支'), '文案显示超支')
+        ok(txt(q('.budget-card', main())).includes('2,000.00'), '重挂后生活费设置仍在')
+
+        // 改额度（就地更新）
+        q('.budget-card', main()).click()
+        await tick()
+        const editRow = q(`.bi-edit[data-id="${foodId}"]`, main())
+        const editAmt = q('[data-field="amount"]', editRow)
+        editAmt.value = '200'
+        fire(editAmt, 'change')
+        await tick()
+        ok(store.getBudgetItems().find((i) => i.id === foodId).amount === 200, '改额度写进 store')
+        ok(q(`.bi-edit[data-id="${foodId}"]`, main()) === editRow, '改额度没有重建面板')
+
+        // 重复挂载后事件监听器不该累积：删一条只弹一个确认框
+        await remount('stats')
+        q('.budget-card', main()).click()
+        await tick()
+        q('.bi-edit [data-act="item-del"]', main()).click()
+        await tick()
+        ok(qa('.dlg-mask').length === 1, '反复切换标签后删除只弹一个确认框（监听器没累积）')
+        q('[data-act="ok"]', q('.dlg-mask')).click()
+        await sleep(320)
+        ok(store.getBudgetItems().length === 1, '删掉一条额度')
+
+        // 总额清空 = 不设上限，专项额度保留
+        q('.budget-card', main()).click()
+        await tick()
+        const total2 = q('[data-field="total"]', main())
+        total2.value = ''
+        fire(total2, 'change')
+        await tick()
+        ok(store.getBudget() === null, '清空总额 = 不设上限')
+        ok(store.getBudgetItems().length === 1, '清总额不影响专项额度')
+        ok(!!q('.budget-card.is-empty', main()), '卡片回到未设置状态')
+        ok(!q('.dlg-mask'), '整个过程都没有遮罩弹窗')
+
+        // ---------------- 其他 ----------------
+        ok(typeof ui.promptDialog === 'undefined', '遮挡式输入弹窗已移除')
+        ok(
+          typeof ui.trackKeyboardInset === 'function' && typeof ui.bindFocusScroll === 'function',
+          '键盘适配工具已就位'
+        )
+        ok(getComputedStyle(main()).overflowY === 'auto', '内容区可滚动，能把输入滚出键盘范围')
+
+        localStorage.setItem('ledger.categories.v1', '{坏数据')
+        ok(store.categoriesOf('expense').length > 0, '分类数据损坏时回落预置分类')
+        localStorage.removeItem('ledger.categories.v1')
+      } catch (err) {
+        fail++
+        log.push('FAIL 未捕获异常: ' + (err && err.stack ? err.stack : err))
+      }
+
+      document.body.innerHTML = ''
+      const pre = document.createElement('pre')
+      pre.id = 'result'
+      pre.textContent = `RESULT pass=${pass} fail=${fail}\n` + log.join('\n')
+      document.body.appendChild(pre)
+      document.title = fail ? 'DOMCHECK-FAIL' : 'DOMCHECK-PASS'
+    </script>
+  </body>
+</html>

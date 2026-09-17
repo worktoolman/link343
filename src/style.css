@@ -26,6 +26,9 @@
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 
+  /* 软键盘高度，由 ui.js 的 trackKeyboardInset() 实时写入 */
+  --kb: 0px;
+
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
 
   color-scheme: light dark;
@@ -95,6 +98,9 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* dvh 更贴合手机浏览器的动态地址栏；键盘弹出时整体抬高，内容不会被压住 */
+  height: 100dvh;
+  padding-bottom: var(--kb);
 }
 
 .app-header {
@@ -316,10 +322,30 @@ textarea {
 }
 
 .field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
   padding-left: 2px;
   font-size: 13px;
   color: var(--text-dim);
+}
+
+/* 字段标题右侧的小按钮，如「管理」分类 */
+.field-action {
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+
+.field-action.is-active {
+  background: var(--accent);
+  color: #fff;
 }
 
 /* 分类九宫格 */
@@ -337,6 +363,11 @@ textarea {
   font-size: 14px;
   box-shadow: var(--shadow);
   transition: background 0.15s, color 0.15s, transform 0.1s;
+  /* 自定义分类可能比较长，超出就省略 */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .cat:active {
@@ -351,6 +382,7 @@ textarea {
 }
 
 /* 文本 / 日期输入 */
+/* 字号保持 16px：iOS 上小于 16px 的输入框会在聚焦时把整页放大，界面就乱了 */
 .text-input {
   width: 100%;
   padding: 13px var(--pad);
@@ -358,7 +390,7 @@ textarea {
   border-radius: var(--radius-sm);
   outline: none;
   background: var(--surface);
-  font-size: 15px;
+  font-size: 16px;
   box-shadow: var(--shadow);
   transition: border-color 0.15s;
 }
@@ -403,7 +435,7 @@ textarea {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 84px);
+  bottom: calc(var(--safe-bottom) + 84px + var(--kb));
   z-index: 100;
   max-width: 76vw;
   padding: 10px 18px;
@@ -547,7 +579,7 @@ textarea {
   align-items: flex-end;
   justify-content: center;
   padding: var(--pad);
-  padding-bottom: calc(var(--safe-bottom) + var(--pad));
+  padding-bottom: calc(var(--safe-bottom) + var(--pad) + var(--kb));
   background: rgba(0, 0, 0, 0.4);
   opacity: 0;
   transition: opacity 0.2s;
@@ -908,49 +940,341 @@ textarea {
   color: var(--text-faint);
 }
 
-/* ---------- 输入对话框 ---------- */
+/* ---------- 内联编辑面板 ----------
+   输入一律在页面里就地展开，不用弹窗、不盖遮罩：
+   竖屏时能一边看着下面的内容一边改，键盘弹出也不会把内容挡住。 */
 
-.dlg-input-row {
+.inline-panel {
+  margin-bottom: var(--gap);
+  padding: 14px var(--pad) var(--pad);
+  background: var(--surface);
+  border: 1.5px solid var(--accent-soft);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.panel-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  padding: 12px var(--pad);
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panel-done {
+  flex: none;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.panel-done:active {
+  opacity: 0.8;
+}
+
+.panel-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+/* 输入框：带边框的「盒子」样式 */
+.boxed-input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 12px;
   background: var(--surface-sunken);
   border: 1.5px solid transparent;
   border-radius: var(--radius-sm);
-  transition: border-color 0.15s;
+  outline: none;
+  font-size: 16px;
+  transition: border-color 0.15s, background 0.15s;
 }
 
-.dlg-input-row:focus-within {
+.boxed-input:focus {
   border-color: var(--accent);
+  background: var(--surface);
 }
 
-.dlg-input {
+.boxed-input::placeholder {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+/* 带货币符号的输入框 */
+.editor-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 12px;
+  background: var(--surface-sunken);
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.editor-input-wrap:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.editor-symbol {
+  flex: none;
+  font-size: 14px;
+  color: var(--text-faint);
+}
+
+.editor-input {
   flex: 1;
   min-width: 0;
   border: none;
   outline: none;
   background: none;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
-.dlg-input::placeholder {
+.editor-input::placeholder {
   font-weight: 400;
   color: var(--text-faint);
 }
 
-.dlg-suffix {
-  flex: none;
-  font-size: 14px;
+.editor-field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.editor-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 
-.dlg-error {
-  margin-top: 8px;
-  padding-left: 2px;
-  font-size: 12px;
-  color: var(--expense);
+.editor-sub {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  color: var(--text-dim);
 }
+
+/* 分类管理：一行一个分类 */
+.cat-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cat-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cat-edit-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* 小按钮 */
+.mini-btn {
+  flex: none;
+  padding: 11px 15px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mini-btn:active {
+  opacity: 0.88;
+}
+
+.icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-faint);
+  font-size: 14px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.icon-btn:active {
+  background: var(--expense);
+  color: #fff;
+}
+
+/* 虚线「加一条」按钮 */
+.add-row-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.add-row-btn:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* 专项额度：编辑态的一行 */
+.bi-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bi-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+}
+
+.bi-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 面板底色是 sunken，行内输入框改用白底才分得清 */
+.bi-edit .boxed-input,
+.bi-edit .editor-input-wrap {
+  background: var(--surface);
+}
+
+.bi-edit-row .editor-input-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.bi-edit-tip {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.bi-select {
+  flex: 0 1 42%;
+  min-width: 0;
+  padding: 11px 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  /* 字号 16px：iOS 聚焦下拉框时不会把页面放大 */
+  font-size: 16px;
+}
+
+/* ---------- 专项额度：只读卡片 ---------- */
+
+.bi-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+.bi-card {
+  padding: 13px var(--pad);
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.bi-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.bi-name {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bi-amount {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bi-of {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.bi-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.bi-fill {
+  height: 100%;
+  min-width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.45s cubic-bezier(0.2, 0.9, 0.3, 1), background 0.3s;
+}
+
+.bi-card[data-state='warn'] .bi-fill {
+  background: #e0a33a;
+}
+
+.bi-card[data-state='over'] .bi-fill {
+  background: var(--expense);
+}
+
+.bi-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.bi-cat {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bi-remain {
+  flex: none;
+}
+

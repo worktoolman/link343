@@ -1,6 +1,7 @@
 import './style.css'
 // 副作用导入：开发环境会把 API 挂到 window.store，方便控制台调试
 import './store.js'
+import { trackKeyboardInset, bindFocusScroll } from './ui.js'
 import { recordView } from './views/record.js'
 import { listView } from './views/list.js'
 import { statsView } from './views/stats.js'
@@ -23,8 +24,16 @@ app.innerHTML = `
 
 const titleEl = app.querySelector('#title')
 const subtitleEl = app.querySelector('#subtitle')
-const bodyEl = app.querySelector('#body')
+let bodyEl = app.querySelector('#body')
 const tabbarEl = app.querySelector('#tabbar')
+
+// ---------- 软键盘 ----------
+//
+// 键盘弹出时把键盘高度写进 --kb，页面据此在底部留白，
+// 正在输入的内容不会被键盘压住，其他内容也还能滚出来。
+
+trackKeyboardInset()
+bindFocusScroll()
 
 // ---------- 标签栏 ----------
 
@@ -58,8 +67,14 @@ function go(id) {
     typeof view.subtitle === 'function' ? view.subtitle() : view.subtitle
   )
 
-  bodyEl.scrollTop = 0
-  bodyEl.innerHTML = ''
+  // 每次都换一个全新的内容区：视图把事件绑在这个元素上，
+  // 复用同一个元素会让切回来时的旧监听器一起响应（长按弹两次确认框之类）
+  const fresh = document.createElement('main')
+  fresh.className = 'app-main'
+  fresh.id = 'body'
+  bodyEl.replaceWith(fresh)
+  bodyEl = fresh
+
   view.mount(bodyEl, { setSubtitle })
 
   for (const el of tabEls) {

@@ -6,7 +6,7 @@
    改了 sw.js 本身记得把 CACHE 版本号 +1，否则旧缓存不会清
    ============================================ */
 
-const CACHE = 'ledger-v1'
+const CACHE = 'ledger-v2'
 
 /** 安装时预缓存的应用外壳 */
 const SHELL = [

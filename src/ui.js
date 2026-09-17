@@ -120,101 +120,48 @@ export function confirmDialog({
 }
 
 /**
- * 底部弹出的输入对话框
- * @param {{
- *   title?:string, message?:string, defaultValue?:string, placeholder?:string,
- *   confirmText?:string, cancelText?:string, inputMode?:string, suffix?:string,
- *   validate?:((v:string)=>(string|null))|null
- * }} opts
- * @returns {Promise<string|null>} 确定返回输入值，取消返回 null
+ * 跟随软键盘调整布局
+ *
+ * 把键盘高度写进 CSS 变量 --kb，页面据此在底部留白，
+ * 输入时内容就不会被键盘压住（#app / 对话框 / toast 都用到它）。
+ *
+ * 安卓 Chrome 配了 viewport 的 interactive-widget=resizes-content 后，
+ * innerHeight 会跟着键盘一起变，算出来是 0，不会重复留白。
+ *
+ * @returns {() => void} 手动同步一次的句柄
  */
-export function promptDialog({
-  title = '',
-  message = '',
-  defaultValue = '',
-  placeholder = '',
-  confirmText = '确定',
-  cancelText = '取消',
-  inputMode = 'text',
-  suffix = '',
-  validate = null,
-} = {}) {
-  return new Promise((resolve) => {
-    const mask = document.createElement('div')
-    mask.className = 'dlg-mask'
-    mask.innerHTML = `
-      <div class="dlg">
-        <div class="dlg-title">${escapeHtml(title)}</div>
-        ${message ? `<div class="dlg-msg">${escapeHtml(message)}</div>` : ''}
-        <div class="dlg-input-row">
-          <input
-            class="dlg-input"
-            type="text"
-            inputmode="${escapeHtml(inputMode)}"
-            value="${escapeHtml(defaultValue)}"
-            placeholder="${escapeHtml(placeholder)}"
-            autocomplete="off"
-          />
-          ${suffix ? `<span class="dlg-suffix">${escapeHtml(suffix)}</span>` : ''}
-        </div>
-        <div class="dlg-error" hidden></div>
-        <div class="dlg-actions">
-          <button type="button" class="dlg-btn" data-act="cancel">${escapeHtml(cancelText)}</button>
-          <button type="button" class="dlg-btn is-primary" data-act="ok">${escapeHtml(confirmText)}</button>
-        </div>
-      </div>
-    `
-    document.body.appendChild(mask)
-    requestAnimationFrame(() => mask.classList.add('is-show'))
+export function trackKeyboardInset() {
+  const vv = window.visualViewport
+  if (!vv) return () => {}
 
-    const input = mask.querySelector('.dlg-input')
-    const errEl = mask.querySelector('.dlg-error')
+  const apply = () => {
+    const overlap = window.innerHeight - vv.height - vv.offsetTop
+    // 60px 阈值：过滤地址栏收缩/展开造成的抖动
+    const kb = overlap > 60 ? Math.round(overlap) : 0
+    document.documentElement.style.setProperty('--kb', `${kb}px`)
+  }
 
-    // 等入场动画起来再聚焦，否则移动端键盘会打断动画
+  apply()
+  vv.addEventListener('resize', apply)
+  vv.addEventListener('scroll', apply)
+  window.addEventListener('orientationchange', apply)
+  return apply
+}
+
+/**
+ * 输入框获得焦点时把它滚到屏幕中间
+ * 键盘弹出后立刻滚一次，避免输入框刚好躲在键盘下面
+ */
+export function bindFocusScroll() {
+  document.addEventListener('focusin', (e) => {
+    const el = e.target
+    if (!(el instanceof HTMLElement)) return
+    if (!el.matches('input, select, textarea')) return
+
+    // 等键盘动画开始再滚，否则滚完键盘才顶上来
     setTimeout(() => {
-      input.focus()
-      input.select()
-    }, 60)
-
-    let done = false
-    function close(val) {
-      if (done) return
-      done = true
-      mask.classList.remove('is-show')
-      setTimeout(() => mask.remove(), 220)
-      resolve(val)
-    }
-
-    function submit() {
-      const val = input.value.trim()
-      const err = validate ? validate(val) : null
-      if (err) {
-        errEl.textContent = err
-        errEl.hidden = false
-        input.focus()
-        return
-      }
-      close(val)
-    }
-
-    mask.addEventListener('click', (e) => {
-      if (e.target === mask) return close(null)
-      const btn = e.target.closest('.dlg-btn')
-      if (!btn) return
-      if (btn.dataset.act === 'ok') submit()
-      else close(null)
-    })
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        submit()
-      }
-    })
-
-    input.addEventListener('input', () => {
-      errEl.hidden = true
-    })
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 260)
   })
 }
 

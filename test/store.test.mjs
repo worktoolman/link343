@@ -33,6 +33,20 @@ const {
   getBudget,
   setBudget,
   clearBudget,
+  // 自定义分类
+  categoriesOf,
+  addCategory,
+  renameCategory,
+  removeCategory,
+  resetCategories,
+  countRecordsOfCategory,
+  DEFAULT_EXPENSE_CATEGORIES,
+  DEFAULT_INCOME_CATEGORIES,
+  // 专项额度
+  getBudgetItems,
+  addBudgetItem,
+  updateBudgetItem,
+  removeBudgetItem,
 } = await import('../src/store.js')
 
 // ---------- 迷你断言 ----------
@@ -354,6 +368,307 @@ check('收入不影响生活费占比', () => {
   const s = getStats('2026-09')
   eq(s.usedPercent, 30, '只算支出')
   eq(s.remaining, 700)
+})
+
+console.log('\n【自定义分类】')
+
+check('默认分类就是预置列表', () => {
+  clearAll()
+  eq(categoriesOf('expense'), DEFAULT_EXPENSE_CATEGORIES)
+  eq(categoriesOf('income'), DEFAULT_INCOME_CATEGORIES)
+})
+
+check('addCategory 新增分类，互不影响收支两侧', () => {
+  clearAll()
+  eq(addCategory('expense', '宠物'), '宠物')
+  ok(categoriesOf('expense').includes('宠物'), '支出分类应含新分类')
+  eq(
+    categoriesOf('income').length,
+    DEFAULT_INCOME_CATEGORIES.length,
+    '收入分类不该被改动'
+  )
+})
+
+check('addCategory 去空格、拒绝重复与空名', () => {
+  clearAll()
+  eq(addCategory('expense', '  宠物  '), '宠物')
+  for (const bad of ['宠物', '', '   ']) {
+    let threw = false
+    try {
+      addCategory('expense', bad)
+    } catch {
+      threw = true
+    }
+    ok(threw, `${JSON.stringify(bad)} 应被拒绝`)
+  }
+})
+
+check('addCategory 拒绝超长名称', () => {
+  clearAll()
+  let threw = false
+  try {
+    addCategory('expense', '一二三四五六七八九')
+  } catch {
+    threw = true
+  }
+  ok(threw, '超过 8 个字应被拒绝')
+})
+
+check('renameCategory 同步已有记录', () => {
+  clearAll()
+  addRecord({ amount: 10, type: 'expense', category: '餐饮', date: '2026-09-01' })
+  // 收入侧的同名分类不该被误改
+  addRecord({ amount: 20, type: 'income', category: '餐饮', date: '2026-09-01' })
+
+  eq(renameCategory('expense', '餐饮', '吃饭'), '吃饭')
+  ok(categoriesOf('expense').includes('吃饭'), '列表里应是新名字')
+  ok(!categoriesOf('expense').includes('餐饮'), '旧名字应消失')
+
+  const records = getRecords()
+  eq(records.find((r) => r.type === 'expense').category, '吃饭')
+  eq(records.find((r) => r.type === 'income').category, '餐饮', '收入不该被改')
+})
+
+check('renameCategory 重名或不存在的分类会报错', () => {
+  clearAll()
+  let threw = 0
+  try {
+    renameCategory('expense', '餐饮', '交通')
+  } catch {
+    threw++
+  }
+  try {
+    renameCategory('expense', '不存在', '新名')
+  } catch {
+    threw++
+  }
+  eq(threw, 2)
+})
+
+check('renameCategory 同步专项额度绑定的分类', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+  renameCategory('expense', '餐饮', '吃饭')
+  eq(getBudgetItems('2026-09')[0].category, '吃饭')
+})
+
+check('removeCategory 删分类但不删记录', () => {
+  clearAll()
+  addRecord({ amount: 10, type: 'expense', category: '餐饮', date: '2026-09-01' })
+
+  eq(removeCategory('expense', '餐饮'), true)
+  ok(!categoriesOf('expense').includes('餐饮'), '列表里应消失')
+  eq(getRecords()[0].category, '餐饮', '记录保留原分类名')
+  eq(getStats('2026-09').byCategory[0].category, '餐饮', '统计里仍能看到')
+  eq(countRecordsOfCategory('餐饮'), 1)
+})
+
+check('removeCategory 分类不存在返回 false', () => {
+  clearAll()
+  eq(removeCategory('expense', '不存在'), false)
+})
+
+check('removeCategory 至少保留一个分类', () => {
+  clearAll()
+  const list = categoriesOf('expense')
+  for (let i = 0; i < list.length - 1; i++) removeCategory('expense', list[i])
+  eq(categoriesOf('expense').length, 1)
+
+  let threw = false
+  try {
+    removeCategory('expense', list.at(-1))
+  } catch {
+    threw = true
+  }
+  ok(threw, '删最后一个应报错')
+})
+
+check('分类被清空时回落预置分类', () => {
+  clearAll()
+  localStorage.setItem(
+    'ledger.categories.v1',
+    JSON.stringify({ expense: [], income: [] })
+  )
+  eq(categoriesOf('expense'), DEFAULT_EXPENSE_CATEGORIES)
+})
+
+check('resetCategories 恢复预置分类', () => {
+  clearAll()
+  addCategory('expense', '宠物')
+  removeCategory('expense', '餐饮')
+  resetCategories('expense')
+  eq(categoriesOf('expense'), DEFAULT_EXPENSE_CATEGORIES)
+})
+
+check('addRecord 缺省分类用该类型的第一个', () => {
+  clearAll()
+  eq(addRecord({ amount: 5, type: 'expense' }).category, DEFAULT_EXPENSE_CATEGORIES[0])
+})
+
+console.log('\n【专项额度】')
+
+check('默认没有专项额度', () => {
+  clearAll()
+  eq(getBudgetItems('2026-09'), [])
+  eq(getStats('2026-09').budgetItems, [])
+})
+
+check('addBudgetItem 新增并可读回', () => {
+  clearAll()
+  const it = addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+  ok(it.id, '应有 id')
+  eq(it.amount, 800)
+
+  const list = getBudgetItems('2026-09')
+  eq(list.length, 1)
+  eq(list[0].name, '饮食花销')
+  eq(list[0].category, '餐饮')
+})
+
+check('addBudgetItem 校验名称与额度', () => {
+  clearAll()
+  const bad = [
+    { name: '', category: '餐饮', amount: 100 },
+    { name: '   ', category: '餐饮', amount: 100 },
+    { name: '饮食', category: '餐饮', amount: 0 },
+    { name: '饮食', category: '餐饮', amount: -1 },
+    { name: '饮食', category: '餐饮', amount: 'abc' },
+    { name: '一二三四五六七八九', category: '餐饮', amount: 100 },
+  ]
+  for (const b of bad) {
+    let threw = false
+    try {
+      addBudgetItem(b, '2026-09')
+    } catch {
+      threw = true
+    }
+    ok(threw, `${JSON.stringify(b)} 应被拒绝`)
+  }
+  eq(getBudgetItems('2026-09').length, 0, '被拒绝的不该写进去')
+})
+
+check('updateBudgetItem 改名称 / 分类 / 额度', () => {
+  clearAll()
+  const it = addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+
+  updateBudgetItem(it.id, { name: '吃饭钱' }, '2026-09')
+  updateBudgetItem(it.id, { category: '购物' }, '2026-09')
+  const after = updateBudgetItem(it.id, { amount: '999.5' }, '2026-09')
+
+  eq(after.name, '吃饭钱')
+  eq(after.category, '购物')
+  eq(after.amount, 999.5)
+  eq(getBudgetItems('2026-09').length, 1, '不应变成两条')
+})
+
+check('updateBudgetItem 找不到会报错且不写入', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+
+  let threw = false
+  try {
+    updateBudgetItem('不存在', { amount: 1 }, '2026-09')
+  } catch {
+    threw = true
+  }
+  ok(threw, '应报错')
+  eq(getBudgetItems('2026-09')[0].amount, 800, '原值不该被动过')
+})
+
+check('removeBudgetItem 删除', () => {
+  clearAll()
+  const it = addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+  eq(removeBudgetItem(it.id, '2026-09'), true)
+  eq(getBudgetItems('2026-09').length, 0)
+  eq(removeBudgetItem(it.id, '2026-09'), false)
+})
+
+check('专项额度跨月自动沿用', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+  eq(getBudgetItems('2026-10')[0].name, '饮食花销')
+  eq(getBudgetItems('2025-01')[0].amount, 800)
+})
+
+check('getStats 算出每项额度的已花 / 剩余 / 状态', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 100 }, '2026-09')
+  addBudgetItem({ name: '购物额度', category: '购物', amount: 100 }, '2026-09')
+  addRecord({ amount: 30, type: 'expense', category: '餐饮', date: '2026-09-02' })
+  addRecord({ amount: 150, type: 'expense', category: '购物', date: '2026-09-03' })
+  // 收入不该算进已花
+  addRecord({ amount: 500, type: 'income', category: '餐饮', date: '2026-09-03' })
+
+  const items = getStats('2026-09').budgetItems
+  const food = items.find((x) => x.name === '饮食花销')
+  const shop = items.find((x) => x.name === '购物额度')
+
+  eq(food.spent, 30)
+  eq(food.remaining, 70)
+  eq(food.usedPercent, 30)
+  eq(food.state, 'ok')
+
+  eq(shop.spent, 150)
+  eq(shop.remaining, -50)
+  eq(shop.usedPercent, 150)
+  eq(shop.state, 'over')
+})
+
+check('用到 80% 进入 warn 状态', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 100 }, '2026-09')
+  addRecord({ amount: 80, type: 'expense', category: '餐饮', date: '2026-09-02' })
+  eq(getStats('2026-09').budgetItems[0].state, 'warn')
+})
+
+check('未绑定分类的额度已花为 0', () => {
+  clearAll()
+  addBudgetItem({ name: '没绑分类', category: '', amount: 100 }, '2026-09')
+  addRecord({ amount: 30, type: 'expense', category: '餐饮', date: '2026-09-02' })
+
+  const it = getStats('2026-09').budgetItems[0]
+  eq(it.spent, 0)
+  eq(it.remaining, 100)
+})
+
+check('分类被删掉后额度仍能显示', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 100 }, '2026-09')
+  addRecord({ amount: 30, type: 'expense', category: '餐饮', date: '2026-09-02' })
+  removeCategory('expense', '餐饮')
+
+  const it = getStats('2026-09').budgetItems[0]
+  eq(it.category, '餐饮')
+  eq(it.spent, 30)
+})
+
+check('itemsTotal 是各项额度之和', () => {
+  clearAll()
+  addBudgetItem({ name: '饮食', category: '餐饮', amount: 100.5 }, '2026-09')
+  addBudgetItem({ name: '购物', category: '购物', amount: 200 }, '2026-09')
+  eq(getStats('2026-09').itemsTotal, 300.5)
+})
+
+check('clearBudget 只清总额，保留专项额度', () => {
+  clearAll()
+  setBudget(2000, '2026-09')
+  addBudgetItem({ name: '饮食花销', category: '餐饮', amount: 800 }, '2026-09')
+
+  clearBudget('2026-09')
+  eq(getBudget('2026-09'), null)
+  eq(getBudgetItems('2026-09').length, 1, '专项额度不该被清掉')
+})
+
+check('旧版单值预算自动迁移到 v2', () => {
+  clearAll()
+  localStorage.setItem(
+    'ledger.budget.v1',
+    JSON.stringify({ default: 1500, months: { '2026-09': 2500 } })
+  )
+
+  eq(getBudget('2026-09'), 2500, '月度单独设置应保留')
+  eq(getBudget('2026-10'), 1500, '默认值应保留')
+  eq(getBudgetItems('2026-09'), [], '迁移后没有专项额度')
 })
 
 console.log('\n' + '─'.repeat(40))
